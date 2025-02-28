@@ -7,36 +7,63 @@ import os
 import json
 import streamlit as st
 
-# Google Sheets API setup with environment variables for credentials
+# Debug logging to help troubleshoot Google Sheets connection issues
+def debug_log(message):
+    """Print a debug message to console and also to Streamlit"""
+    print(f"DEBUG: {message}")
+    if 'debug_messages' not in st.session_state:
+        st.session_state.debug_messages = []
+    st.session_state.debug_messages.append(message)
+
+# Google Sheets API setup with Streamlit secrets
 def get_google_credentials():
     """
-    Get Google API credentials from Streamlit secrets or environment variables
+    Get Google API credentials from Streamlit secrets
+    Returns credentials object or None if failed
     """
-    # Streamlit Cloud - secrets are accessed through st.secrets
-    if hasattr(st, 'secrets') and 'credentials' in st.secrets:
-        try:
-            # Parse the credentials from Streamlit secrets
-            credentials_dict = st.secrets['credentials']
-            return ServiceAccountCredentials.from_json_keyfile_dict(
-                credentials_dict, 
-                ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-            )
-        except Exception as e:
-            print(f"Error loading credentials from Streamlit secrets: {e}")
-            
-    # Check if we have the credentials in environment variables (for other cloud deployments)
-    elif os.environ.get('credentials'):
-        try:
-            credentials_dict = json.loads(os.environ.get('credentials'))
-            return ServiceAccountCredentials.from_json_keyfile_dict(
-                credentials_dict, 
-                ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-            )
-        except Exception as e:
-            print(f"Error loading credentials from environment variables: {e}")
+    debug_log("Starting credentials setup...")
     
-    # Handle case where no credentials are available
-    print("No valid credentials found. Using demo mode.")
+    # Check if Streamlit secrets are available
+    if hasattr(st, 'secrets'):
+        debug_log("Streamlit secrets are available")
+        
+        # Check for Google credentials in secrets
+        if 'GOOGLE_CREDENTIALS' in st.secrets:
+            debug_log("Found GOOGLE_CREDENTIALS in secrets")
+            try:
+                # Get credentials dict
+                credentials_dict = st.secrets['GOOGLE_CREDENTIALS']
+                
+                # Log some basic info about the credentials (without sensitive parts)
+                if isinstance(credentials_dict, dict):
+                    debug_log(f"Credentials format: dictionary")
+                    if 'client_email' in credentials_dict:
+                        debug_log(f"Service account email: {credentials_dict['client_email']}")
+                    if 'project_id' in credentials_dict:
+                        debug_log(f"Project ID: {credentials_dict['project_id']}")
+                else:
+                    debug_log(f"Credentials format is not a dictionary: {type(credentials_dict)}")
+                    # Try to parse as string if it's not already a dict
+                    try:
+                        credentials_dict = json.loads(credentials_dict)
+                        debug_log("Successfully parsed credentials string")
+                    except:
+                        debug_log("Failed to parse credentials as JSON string")
+                
+                # Create credentials object
+                debug_log("Creating ServiceAccountCredentials...")
+                return ServiceAccountCredentials.from_json_keyfile_dict(
+                    credentials_dict, 
+                    ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+                )
+            except Exception as e:
+                debug_log(f"Error processing credentials: {str(e)}")
+        else:
+            debug_log("GOOGLE_CREDENTIALS not found in Streamlit secrets")
+    else:
+        debug_log("No Streamlit secrets available")
+    
+    debug_log("Falling back to dummy data mode")
     return None
 
 # Attempt to get Google API credentials
@@ -45,27 +72,48 @@ creds = get_google_credentials()
 # Try to authorize with gspread if we have credentials
 if creds:
     try:
+        debug_log("Authorizing with gspread...")
         client = gspread.authorize(creds)
-        # Get the sheet name from secrets, environment variables, or use default
+        debug_log("gspread authorization successful")
+        
+        # Get the sheet name from secrets
         if hasattr(st, 'secrets') and 'GOOGLE_SHEET_NAME' in st.secrets:
             SHEET_NAME = st.secrets['GOOGLE_SHEET_NAME']
+            debug_log(f"Using sheet name from secrets: {SHEET_NAME}")
         else:
-            SHEET_NAME = os.environ.get('GOOGLE_SHEET_NAME', 'ARM_1060_copy')
-            
+            SHEET_NAME = 'ARM_1060_copy'
+            debug_log(f"GOOGLE_SHEET_NAME not found in secrets, using default: {SHEET_NAME}")
+        
         # Try to open the Google Sheet
+        debug_log(f"Attempting to open Google Sheet: {SHEET_NAME}")
         spreadsheet = client.open(SHEET_NAME)
-        sheet = spreadsheet.sheet1  # First sheet
-        print(f"Successfully connected to sheet: {SHEET_NAME}")
+        debug_log(f"Successfully opened sheet: {SHEET_NAME}")
+        
+        # List available worksheets
+        worksheet_list = spreadsheet.worksheets()
+        debug_log(f"Available worksheets: {', '.join([ws.title for ws in worksheet_list])}")
+        
+        # Use the first sheet
+        sheet = spreadsheet.sheet1
+        debug_log(f"Using first worksheet: {sheet.title}")
+        
+        # Verify we can read data
+        cell_value = sheet.acell('A1').value
+        debug_log(f"Successfully read cell A1: {cell_value}")
+        
     except Exception as e:
-        print(f"Error connecting to Google Sheet: {e}")
+        debug_log(f"Error connecting to Google Sheet: {str(e)}")
         sheet = None
+        client = None
 else:
+    debug_log("No valid credentials, cannot authorize with gspread")
     client = None
     sheet = None
 
 # Setup dummy sheet data for when we can't connect to the actual sheet
 class DummySheet:
     def get_all_records(self):
+        debug_log("Using dummy sheet data")
         return [
             {"Lift": "Red Pine Gondola", "MEOW Category": "Hold", "MEOW Reasoning": "High wind", 
              "10.60 TIME": "2025-02-28 08:30:00", "10.63": "", "Fault": "Wind > 35mph"},
@@ -81,7 +129,7 @@ class DummySheet:
 
 # If we couldn't connect to the sheet, use the dummy data
 if sheet is None:
-    print("Using dummy sheet data for demo mode")
+    debug_log("Sheet connection failed, using DummySheet")
     sheet = DummySheet()
 
 # NOAA API setup
@@ -102,7 +150,7 @@ def get_noaa_hourly_wind():
             })
         return wind_data
     except Exception as e:
-        print(f"Error fetching NOAA data: {e}")
+        debug_log(f"Error fetching NOAA data: {str(e)}")
         # Return dummy data if API fails
         return [
             {"time": "2025-02-28T08:00:00-07:00", "wind_speed": 15, "wind_direction": "W"},
@@ -126,8 +174,15 @@ def get_lift_data():
     """
     # Load data from the Google Sheet into a DataFrame
     try:
+        debug_log("Fetching data from sheet...")
         data = sheet.get_all_records()
+        debug_log(f"Got {len(data)} records from sheet")
+        
+        if len(data) == 0:
+            debug_log("WARNING: Sheet returned 0 records")
+        
         df = pd.DataFrame(data)
+        debug_log(f"DataFrame created with columns: {', '.join(df.columns)}")
 
         # Convert the "10.60 TIME" column to datetime
         df["10.60 TIME"] = pd.to_datetime(df["10.60 TIME"], errors="coerce")
@@ -135,11 +190,15 @@ def get_lift_data():
         # Filter for today's records, where MEOW Category is either "Reduced/Adjust Speed" or "Hold"
         # and where "10.63" is blank (meaning they haven't been resolved yet).
         today = datetime.today().strftime("%Y-%m-%d")
+        debug_log(f"Filtering for today's date: {today}")
+        
         filtered_df = df[
             (df["10.60 TIME"].dt.strftime("%Y-%m-%d") == today) &
             (df["MEOW Category"].isin(["Reduced/Adjust Speed", "Hold"])) &
             ((df["10.63"].isna()) | (df["10.63"] == ""))
         ].copy()
+        
+        debug_log(f"After filtering: {len(filtered_df)} records")
 
         # Calculate the "Duration" (in hours, rounded to 2 decimal places) since the "10.60 TIME"
         now = pd.Timestamp.now()
@@ -147,17 +206,20 @@ def get_lift_data():
 
         # Get only the lifts on hold (i.e. where MEOW Category is "Hold")
         holds_all = filtered_df[filtered_df["MEOW Category"] == "Hold"]
+        debug_log(f"Lifts on hold: {len(holds_all)}")
 
         # From the holds, get those where the MEOW Reasoning mentions "wind"
         wind_hold = holds_all[holds_all["MEOW Reasoning"].str.contains("wind", case=False, na=False)]
+        debug_log(f"Lifts on wind hold: {len(wind_hold)}")
 
         # The "other" holds are those lifts on hold that are not wind-related
         other_hold = holds_all[~holds_all.index.isin(wind_hold.index)]
+        debug_log(f"Lifts on other hold: {len(other_hold)}")
 
         return filtered_df, wind_hold, other_hold
     
     except Exception as e:
-        print(f"Error processing lift data: {e}")
+        debug_log(f"Error processing lift data: {str(e)}")
         # Return empty DataFrames in case of error
         empty_df = pd.DataFrame(columns=["Lift", "MEOW Category", "MEOW Reasoning", 
                                          "10.60 TIME", "10.63", "Fault", "Duration"])
