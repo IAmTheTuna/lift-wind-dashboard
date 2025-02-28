@@ -58,6 +58,12 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
+# Add a debug section in the sidebar
+with st.sidebar:
+    st.title("Debug Info")
+    show_debug = st.checkbox("Show Debug Info", value=True)
+
 # ----------------------------
 # NOAA Wind Forecast Function (with gusts and trend)
 def get_noaa_hourly_wind(url, num_hours=5):
@@ -197,6 +203,13 @@ st.title("Lift Wind Status Dashboard")
 
 # Auto-refresh every 30 seconds
 st_autorefresh(interval=30 * 1000, key="data_refresh")
+
+# Display debug messages if enabled
+if show_debug and 'debug_messages' in st.session_state:
+    with st.sidebar:
+        st.subheader("Debug Messages")
+        for msg in st.session_state.debug_messages:
+            st.text(msg)
 
 # Fetch lift data (now use all returned dataframes)
 all_lifts_df, wind_hold_df, other_hold_df = get_lift_data()
