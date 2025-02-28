@@ -27,62 +27,73 @@ def get_google_credentials():
     if hasattr(st, 'secrets'):
         debug_log("Streamlit secrets are available")
         
-        # DEBUG: Print all available secrets (without sensitive content)
+        # DEBUG: Print all available secrets keys (without values)
         debug_log(f"Available secret keys: {list(st.secrets.keys())}")
         
-        # Check for Google credentials in secrets
+        # Check for various formats of credentials
+        creds_dict = None
+        
+        # Option 1: Standard GOOGLE_CREDENTIALS
         if 'GOOGLE_CREDENTIALS' in st.secrets:
             debug_log("Found GOOGLE_CREDENTIALS in secrets")
             try:
-                # Get credentials dict
-                credentials_dict = st.secrets['GOOGLE_CREDENTIALS']
-                
-                # Log some basic info about the credentials (without sensitive parts)
-                if isinstance(credentials_dict, dict):
-                    debug_log(f"Credentials format: dictionary")
-                    if 'client_email' in credentials_dict:
-                        debug_log(f"Service account email: {credentials_dict['client_email']}")
-                    if 'project_id' in credentials_dict:
-                        debug_log(f"Project ID: {credentials_dict['project_id']}")
+                creds_value = st.secrets['GOOGLE_CREDENTIALS']
+                if isinstance(creds_value, dict):
+                    debug_log("GOOGLE_CREDENTIALS is a dictionary")
+                    creds_dict = creds_value
                 else:
-                    debug_log(f"Credentials format is not a dictionary: {type(credentials_dict)}")
-                    # Try to parse as string if it's not already a dict
-                    try:
-                        debug_log(f"Credentials value preview: {str(credentials_dict)[:30]}...")
-                        credentials_dict = json.loads(credentials_dict)
-                        debug_log("Successfully parsed credentials string as JSON")
-                    except Exception as parse_error:
-                        debug_log(f"Failed to parse credentials as JSON: {str(parse_error)}")
+                    debug_log(f"GOOGLE_CREDENTIALS is a {type(creds_value)}, trying to parse as JSON")
+                    creds_dict = json.loads(str(creds_value))
+            except Exception as e:
+                debug_log(f"Error processing GOOGLE_CREDENTIALS: {str(e)}")
+        
+        # Option 2: Nested google.credentials format
+        elif 'google' in st.secrets:
+            debug_log("Found 'google' section in secrets")
+            try:
+                # Print available keys in the google section
+                google_keys = list(st.secrets.google.keys()) if hasattr(st.secrets.google, 'keys') else []
+                debug_log(f"Keys in google section: {google_keys}")
+                
+                if 'credentials' in st.secrets.google:
+                    debug_log("Found google.credentials")
+                    creds_value = st.secrets.google.credentials
+                    
+                    if isinstance(creds_value, dict):
+                        debug_log("google.credentials is a dictionary")
+                        creds_dict = creds_value
+                    else:
+                        # It might be a string, so try to parse it
+                        debug_log(f"google.credentials is a {type(creds_value)}, trying to parse")
+                        if isinstance(creds_value, str):
+                            try:
+                                creds_dict = json.loads(creds_value)
+                                debug_log("Successfully parsed google.credentials as JSON")
+                            except json.JSONDecodeError as json_err:
+                                debug_log(f"Failed to parse google.credentials as JSON: {str(json_err)}")
+                                # Show a sample of the string for debugging
+                                if len(str(creds_value)) > 20:
+                                    debug_log(f"First 20 chars: {str(creds_value)[:20]}...")
+                        else:
+                            debug_log(f"Unexpected type for google.credentials: {type(creds_value)}")
+            except Exception as e:
+                debug_log(f"Error accessing google.credentials: {str(e)}")
+        
+        # If we found credentials in any format
+        if creds_dict:
+            try:
+                # Validate the structure
+                if 'client_email' in creds_dict:
+                    debug_log(f"Service account email: {creds_dict['client_email']}")
                 
                 # Create credentials object
                 debug_log("Creating ServiceAccountCredentials...")
                 return ServiceAccountCredentials.from_json_keyfile_dict(
-                    credentials_dict, 
+                    creds_dict, 
                     ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
                 )
             except Exception as e:
-                debug_log(f"Error processing credentials: {str(e)}")
-        else:
-            debug_log("GOOGLE_CREDENTIALS not found in Streamlit secrets")
-            debug_log("Looking for google.credentials instead...")
-            
-            # Try alternative format (google.credentials)
-            if 'google' in st.secrets and 'credentials' in st.secrets.google:
-                debug_log("Found google.credentials in secrets")
-                try:
-                    credentials_str = st.secrets.google.credentials
-                    debug_log(f"Credentials string preview: {credentials_str[:30]}...")
-                    
-                    credentials_dict = json.loads(credentials_str)
-                    debug_log("Successfully parsed credentials from google.credentials")
-                    
-                    # Create credentials object
-                    return ServiceAccountCredentials.from_json_keyfile_dict(
-                        credentials_dict,
-                        ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-                    )
-                except Exception as e:
-                    debug_log(f"Error processing google.credentials: {str(e)}")
+                debug_log(f"Error creating credentials: {str(e)}")
     else:
         debug_log("No Streamlit secrets available")
     
@@ -97,7 +108,7 @@ def get_sheet_name():
             sheet_name = st.secrets['GOOGLE_SHEET_NAME']
             debug_log(f"Using GOOGLE_SHEET_NAME from secrets: {sheet_name}")
             return sheet_name
-        elif 'google' in st.secrets and 'sheet_name' in st.secrets.google:
+        elif 'google' in st.secrets and hasattr(st.secrets.google, 'sheet_name'):
             sheet_name = st.secrets.google.sheet_name
             debug_log(f"Using google.sheet_name from secrets: {sheet_name}")
             return sheet_name
