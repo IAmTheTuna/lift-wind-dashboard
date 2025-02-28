@@ -13,10 +13,10 @@ def get_google_credentials():
     Get Google API credentials from Streamlit secrets or environment variables
     """
     # Streamlit Cloud - secrets are accessed through st.secrets
-    if hasattr(st, 'secrets') and 'GOOGLE_CREDENTIALS' in st.secrets:
+    if hasattr(st, 'secrets') and 'credentials' in st.secrets:
         try:
             # Parse the credentials from Streamlit secrets
-            credentials_dict = st.secrets['GOOGLE_CREDENTIALS']
+            credentials_dict = st.secrets['credentials']
             return ServiceAccountCredentials.from_json_keyfile_dict(
                 credentials_dict, 
                 ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -25,9 +25,9 @@ def get_google_credentials():
             print(f"Error loading credentials from Streamlit secrets: {e}")
             
     # Check if we have the credentials in environment variables (for other cloud deployments)
-    elif os.environ.get('GOOGLE_CREDENTIALS'):
+    elif os.environ.get('credentials'):
         try:
-            credentials_dict = json.loads(os.environ.get('GOOGLE_CREDENTIALS'))
+            credentials_dict = json.loads(os.environ.get('credentials'))
             return ServiceAccountCredentials.from_json_keyfile_dict(
                 credentials_dict, 
                 ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
