@@ -5,56 +5,83 @@ import pandas as pd
 from datetime import datetime
 import os
 import json
+import streamlit as st
 
 # Google Sheets API setup with environment variables for credentials
 def get_google_credentials():
     """
-    Get Google API credentials from environment variables or json file
+    Get Google API credentials from Streamlit secrets or environment variables
     """
-    # Check if we have the credentials in environment variables (for production)
-    if os.environ.get('GOOGLE_CREDENTIALS'):
-        # Create a temporary file with the credentials content
-        credentials_dict = json.loads(os.environ.get('GOOGLE_CREDENTIALS'))
-        return ServiceAccountCredentials.from_json_keyfile_dict(
-            credentials_dict, 
-            ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        )
+    # Streamlit Cloud - secrets are accessed through st.secrets
+    if hasattr(st, 'secrets') and 'GOOGLE_CREDENTIALS' in st.secrets:
+        try:
+            # Parse the credentials from Streamlit secrets
+            credentials_dict = st.secrets['GOOGLE_CREDENTIALS']
+            return ServiceAccountCredentials.from_json_keyfile_dict(
+                credentials_dict, 
+                ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            )
+        except Exception as e:
+            print(f"Error loading credentials from Streamlit secrets: {e}")
+            
+    # Check if we have the credentials in environment variables (for other cloud deployments)
+    elif os.environ.get('GOOGLE_CREDENTIALS'):
+        try:
+            credentials_dict = json.loads(os.environ.get('GOOGLE_CREDENTIALS'))
+            return ServiceAccountCredentials.from_json_keyfile_dict(
+                credentials_dict, 
+                ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            )
+        except Exception as e:
+            print(f"Error loading credentials from environment variables: {e}")
     
-    # Fallback to local file (for local development)
-    else:
-        return ServiceAccountCredentials.from_json_keyfile_name(
-            "festive-oxide-451114-t5-5926b8554a1d.json", 
-            ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        )
+    # Handle case where no credentials are available
+    print("No valid credentials found. Using demo mode.")
+    return None
 
-# Get Google API credentials
+# Attempt to get Google API credentials
 creds = get_google_credentials()
-client = gspread.authorize(creds)
 
-# Get the sheet name from environment variables or use default
-SHEET_NAME = os.environ.get('GOOGLE_SHEET_NAME', 'ARM_1060_copy')
+# Try to authorize with gspread if we have credentials
+if creds:
+    try:
+        client = gspread.authorize(creds)
+        # Get the sheet name from secrets, environment variables, or use default
+        if hasattr(st, 'secrets') and 'GOOGLE_SHEET_NAME' in st.secrets:
+            SHEET_NAME = st.secrets['GOOGLE_SHEET_NAME']
+        else:
+            SHEET_NAME = os.environ.get('GOOGLE_SHEET_NAME', 'ARM_1060_copy')
+            
+        # Try to open the Google Sheet
+        spreadsheet = client.open(SHEET_NAME)
+        sheet = spreadsheet.sheet1  # First sheet
+        print(f"Successfully connected to sheet: {SHEET_NAME}")
+    except Exception as e:
+        print(f"Error connecting to Google Sheet: {e}")
+        sheet = None
+else:
+    client = None
+    sheet = None
 
-# Open Google Sheet
-try:
-    spreadsheet = client.open(SHEET_NAME)  # Use sheet name from env var or default
-    sheet = spreadsheet.sheet1  # First sheet
-except Exception as e:
-    print(f"Error opening Google Sheet: {e}")
-    # Create a dummy sheet object for testing/demo purposes if real one fails
-    class DummySheet:
-        def get_all_records(self):
-            return [
-                {"Lift": "Red Pine Gondola", "MEOW Category": "Hold", "MEOW Reasoning": "High wind", 
-                 "10.60 TIME": "2025-02-28 08:30:00", "10.63": "", "Fault": "Wind > 35mph"},
-                {"Lift": "Orange Bubble", "MEOW Category": "Hold", "MEOW Reasoning": "High wind", 
-                 "10.60 TIME": "2025-02-28 08:35:00", "10.63": "", "Fault": "Wind > 30mph"},
-                {"Lift": "Eagle", "MEOW Category": "Reduced/Adjust Speed", "MEOW Reasoning": "Wind", 
-                 "10.60 TIME": "2025-02-28 09:15:00", "10.63": "", "Fault": "Wind 20-25mph"},
-                {"Lift": "Jupiter", "MEOW Category": "Hold", "MEOW Reasoning": "High wind", 
-                 "10.60 TIME": "2025-02-28 07:45:00", "10.63": "", "Fault": "Wind > 40mph"},
-                {"Lift": "Tombstone", "MEOW Category": "Hold", "MEOW Reasoning": "Mechanical issue", 
-                 "10.60 TIME": "2025-02-28 10:10:00", "10.63": "", "Fault": "Drive fault"}
-            ]
+# Setup dummy sheet data for when we can't connect to the actual sheet
+class DummySheet:
+    def get_all_records(self):
+        return [
+            {"Lift": "Red Pine Gondola", "MEOW Category": "Hold", "MEOW Reasoning": "High wind", 
+             "10.60 TIME": "2025-02-28 08:30:00", "10.63": "", "Fault": "Wind > 35mph"},
+            {"Lift": "Orange Bubble", "MEOW Category": "Hold", "MEOW Reasoning": "High wind", 
+             "10.60 TIME": "2025-02-28 08:35:00", "10.63": "", "Fault": "Wind > 30mph"},
+            {"Lift": "Eagle", "MEOW Category": "Reduced/Adjust Speed", "MEOW Reasoning": "Wind", 
+             "10.60 TIME": "2025-02-28 09:15:00", "10.63": "", "Fault": "Wind 20-25mph"},
+            {"Lift": "Jupiter", "MEOW Category": "Hold", "MEOW Reasoning": "High wind", 
+             "10.60 TIME": "2025-02-28 07:45:00", "10.63": "", "Fault": "Wind > 40mph"},
+            {"Lift": "Tombstone", "MEOW Category": "Hold", "MEOW Reasoning": "Mechanical issue", 
+             "10.60 TIME": "2025-02-28 10:10:00", "10.63": "", "Fault": "Drive fault"}
+        ]
+
+# If we couldn't connect to the sheet, use the dummy data
+if sheet is None:
+    print("Using dummy sheet data for demo mode")
     sheet = DummySheet()
 
 # NOAA API setup
@@ -98,35 +125,43 @@ def get_lift_data():
         )
     """
     # Load data from the Google Sheet into a DataFrame
-    data = sheet.get_all_records()
-    df = pd.DataFrame(data)
+    try:
+        data = sheet.get_all_records()
+        df = pd.DataFrame(data)
 
-    # Convert the "10.60 TIME" column to datetime
-    df["10.60 TIME"] = pd.to_datetime(df["10.60 TIME"], errors="coerce")
+        # Convert the "10.60 TIME" column to datetime
+        df["10.60 TIME"] = pd.to_datetime(df["10.60 TIME"], errors="coerce")
 
-    # Filter for today's records, where MEOW Category is either "Reduced/Adjust Speed" or "Hold"
-    # and where "10.63" is blank (meaning they haven't been resolved yet).
-    today = datetime.today().strftime("%Y-%m-%d")
-    filtered_df = df[
-        (df["10.60 TIME"].dt.strftime("%Y-%m-%d") == today) &
-        (df["MEOW Category"].isin(["Reduced/Adjust Speed", "Hold"])) &
-        ((df["10.63"].isna()) | (df["10.63"] == ""))
-    ].copy()
+        # Filter for today's records, where MEOW Category is either "Reduced/Adjust Speed" or "Hold"
+        # and where "10.63" is blank (meaning they haven't been resolved yet).
+        today = datetime.today().strftime("%Y-%m-%d")
+        filtered_df = df[
+            (df["10.60 TIME"].dt.strftime("%Y-%m-%d") == today) &
+            (df["MEOW Category"].isin(["Reduced/Adjust Speed", "Hold"])) &
+            ((df["10.63"].isna()) | (df["10.63"] == ""))
+        ].copy()
 
-    # Calculate the "Duration" (in hours, rounded to 2 decimal places) since the "10.60 TIME"
-    now = pd.Timestamp.now()
-    filtered_df["Duration"] = ((now - filtered_df["10.60 TIME"]).dt.total_seconds() / 3600).round(2)
+        # Calculate the "Duration" (in hours, rounded to 2 decimal places) since the "10.60 TIME"
+        now = pd.Timestamp.now()
+        filtered_df["Duration"] = ((now - filtered_df["10.60 TIME"]).dt.total_seconds() / 3600).round(2)
 
-    # Get only the lifts on hold (i.e. where MEOW Category is "Hold")
-    holds_all = filtered_df[filtered_df["MEOW Category"] == "Hold"]
+        # Get only the lifts on hold (i.e. where MEOW Category is "Hold")
+        holds_all = filtered_df[filtered_df["MEOW Category"] == "Hold"]
 
-    # From the holds, get those where the MEOW Reasoning mentions "wind"
-    wind_hold = holds_all[holds_all["MEOW Reasoning"].str.contains("wind", case=False, na=False)]
+        # From the holds, get those where the MEOW Reasoning mentions "wind"
+        wind_hold = holds_all[holds_all["MEOW Reasoning"].str.contains("wind", case=False, na=False)]
 
-    # The "other" holds are those lifts on hold that are not wind-related
-    other_hold = holds_all[~holds_all.index.isin(wind_hold.index)]
+        # The "other" holds are those lifts on hold that are not wind-related
+        other_hold = holds_all[~holds_all.index.isin(wind_hold.index)]
 
-    return filtered_df, wind_hold, other_hold
+        return filtered_df, wind_hold, other_hold
+    
+    except Exception as e:
+        print(f"Error processing lift data: {e}")
+        # Return empty DataFrames in case of error
+        empty_df = pd.DataFrame(columns=["Lift", "MEOW Category", "MEOW Reasoning", 
+                                         "10.60 TIME", "10.63", "Fault", "Duration"])
+        return empty_df, empty_df, empty_df
 
 # For testing purposes:
 if __name__ == "__main__":
