@@ -27,6 +27,9 @@ def get_google_credentials():
     if hasattr(st, 'secrets'):
         debug_log("Streamlit secrets are available")
         
+        # DEBUG: Print all available secrets (without sensitive content)
+        debug_log(f"Available secret keys: {list(st.secrets.keys())}")
+        
         # Check for Google credentials in secrets
         if 'GOOGLE_CREDENTIALS' in st.secrets:
             debug_log("Found GOOGLE_CREDENTIALS in secrets")
@@ -45,10 +48,11 @@ def get_google_credentials():
                     debug_log(f"Credentials format is not a dictionary: {type(credentials_dict)}")
                     # Try to parse as string if it's not already a dict
                     try:
+                        debug_log(f"Credentials value preview: {str(credentials_dict)[:30]}...")
                         credentials_dict = json.loads(credentials_dict)
-                        debug_log("Successfully parsed credentials string")
-                    except:
-                        debug_log("Failed to parse credentials as JSON string")
+                        debug_log("Successfully parsed credentials string as JSON")
+                    except Exception as parse_error:
+                        debug_log(f"Failed to parse credentials as JSON: {str(parse_error)}")
                 
                 # Create credentials object
                 debug_log("Creating ServiceAccountCredentials...")
@@ -60,13 +64,51 @@ def get_google_credentials():
                 debug_log(f"Error processing credentials: {str(e)}")
         else:
             debug_log("GOOGLE_CREDENTIALS not found in Streamlit secrets")
+            debug_log("Looking for google.credentials instead...")
+            
+            # Try alternative format (google.credentials)
+            if 'google' in st.secrets and 'credentials' in st.secrets.google:
+                debug_log("Found google.credentials in secrets")
+                try:
+                    credentials_str = st.secrets.google.credentials
+                    debug_log(f"Credentials string preview: {credentials_str[:30]}...")
+                    
+                    credentials_dict = json.loads(credentials_str)
+                    debug_log("Successfully parsed credentials from google.credentials")
+                    
+                    # Create credentials object
+                    return ServiceAccountCredentials.from_json_keyfile_dict(
+                        credentials_dict,
+                        ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+                    )
+                except Exception as e:
+                    debug_log(f"Error processing google.credentials: {str(e)}")
     else:
         debug_log("No Streamlit secrets available")
     
     debug_log("Falling back to dummy data mode")
     return None
 
+# Try to get the Google Sheet name
+def get_sheet_name():
+    """Get sheet name from Streamlit secrets or use default"""
+    if hasattr(st, 'secrets'):
+        if 'GOOGLE_SHEET_NAME' in st.secrets:
+            sheet_name = st.secrets['GOOGLE_SHEET_NAME']
+            debug_log(f"Using GOOGLE_SHEET_NAME from secrets: {sheet_name}")
+            return sheet_name
+        elif 'google' in st.secrets and 'sheet_name' in st.secrets.google:
+            sheet_name = st.secrets.google.sheet_name
+            debug_log(f"Using google.sheet_name from secrets: {sheet_name}")
+            return sheet_name
+    
+    # Default sheet name
+    default_name = 'ARM_1060_copy'
+    debug_log(f"No sheet name in secrets, using default: {default_name}")
+    return default_name
+
 # Attempt to get Google API credentials
+debug_log("INITIALIZING: Starting Google Sheets connection process")
 creds = get_google_credentials()
 
 # Try to authorize with gspread if we have credentials
@@ -76,33 +118,39 @@ if creds:
         client = gspread.authorize(creds)
         debug_log("gspread authorization successful")
         
-        # Get the sheet name from secrets
-        if hasattr(st, 'secrets') and 'GOOGLE_SHEET_NAME' in st.secrets:
-            SHEET_NAME = st.secrets['GOOGLE_SHEET_NAME']
-            debug_log(f"Using sheet name from secrets: {SHEET_NAME}")
-        else:
-            SHEET_NAME = 'ARM_1060_copy'
-            debug_log(f"GOOGLE_SHEET_NAME not found in secrets, using default: {SHEET_NAME}")
+        # Get the sheet name
+        SHEET_NAME = get_sheet_name()
         
         # Try to open the Google Sheet
         debug_log(f"Attempting to open Google Sheet: {SHEET_NAME}")
-        spreadsheet = client.open(SHEET_NAME)
-        debug_log(f"Successfully opened sheet: {SHEET_NAME}")
-        
-        # List available worksheets
-        worksheet_list = spreadsheet.worksheets()
-        debug_log(f"Available worksheets: {', '.join([ws.title for ws in worksheet_list])}")
-        
-        # Use the first sheet
-        sheet = spreadsheet.sheet1
-        debug_log(f"Using first worksheet: {sheet.title}")
-        
-        # Verify we can read data
-        cell_value = sheet.acell('A1').value
-        debug_log(f"Successfully read cell A1: {cell_value}")
-        
-    except Exception as e:
-        debug_log(f"Error connecting to Google Sheet: {str(e)}")
+        try:
+            spreadsheet = client.open(SHEET_NAME)
+            debug_log(f"Successfully opened sheet: {SHEET_NAME}")
+            
+            # List available worksheets
+            worksheet_list = spreadsheet.worksheets()
+            debug_log(f"Available worksheets: {', '.join([ws.title for ws in worksheet_list])}")
+            
+            # Use the first sheet
+            sheet = spreadsheet.sheet1
+            debug_log(f"Using first worksheet: {sheet.title}")
+            
+            # Verify we can read data
+            try:
+                cell_value = sheet.acell('A1').value
+                debug_log(f"Successfully read cell A1: {cell_value}")
+            except Exception as read_error:
+                debug_log(f"Error reading cell A1: {str(read_error)}")
+                sheet = None
+        except gspread.exceptions.SpreadsheetNotFound:
+            debug_log(f"Spreadsheet '{SHEET_NAME}' not found. Check the sheet name and sharing permissions.")
+            sheet = None
+        except Exception as sheet_error:
+            debug_log(f"Error opening spreadsheet: {str(sheet_error)}")
+            sheet = None
+            
+    except Exception as auth_error:
+        debug_log(f"Error during gspread authorization: {str(auth_error)}")
         sheet = None
         client = None
 else:
@@ -129,7 +177,7 @@ class DummySheet:
 
 # If we couldn't connect to the sheet, use the dummy data
 if sheet is None:
-    debug_log("Sheet connection failed, using DummySheet")
+    debug_log("Sheet connection failed or not initialized, using DummySheet")
     sheet = DummySheet()
 
 # NOAA API setup
