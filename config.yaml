@@ -1,0 +1,17 @@
+credentials:
+  usernames:
+    admin:
+      email: admin@example.com
+      name: Admin User
+      password: $2b$12$qJvmHnU3zXcBKBGMkEw8HuQHDlVx2K7J8C9QOZ.7fqMELsXS0L6gy # hashed password for 'password'
+    operator:
+      email: operator@example.com
+      name: Lift Operator
+      password: $2b$12$qJvmHnU3zXcBKBGMkEw8HuQHDlVx2K7J8C9QOZ.7fqMELsXS0L6gy # hashed password for 'password'
+cookie:
+  expiry_days: 30
+  key: random_signature_key_for_cookie
+  name: lift_dashboard_auth
+preauthorized:
+  emails:
+    - newuser@example.com
